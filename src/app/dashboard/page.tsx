@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
+import Link from 'next/link'
 
 // Define a estrutura de dados do paciente
 type Patient = {
@@ -166,9 +167,23 @@ export default function DashboardPage() {
                       Nascimento: {new Date(patient.date_of_birth).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                     </p>
                   </div>
-                  <button className="text-blue-600 text-sm font-semibold hover:underline bg-blue-50 px-3 py-1.5 rounded">
-                    Nova Avaliação (Em breve)
-                  </button>
+                  
+                  {/* NOVOS BOTÕES: Histórico e Nova Avaliação */}
+                  <div className="flex gap-2">
+                    <Link 
+                      href={`/dashboard/patient/${patient.id}`} 
+                      className="text-gray-700 text-sm font-semibold hover:underline bg-gray-100 px-3 py-1.5 rounded border border-gray-200"
+                    >
+                      Histórico
+                    </Link>
+                    <Link 
+                      href={`/dashboard/evaluation/${patient.id}`} 
+                      className="text-blue-600 text-sm font-semibold hover:underline bg-blue-50 px-3 py-1.5 rounded border border-blue-100"
+                    >
+                      Nova Avaliação
+                    </Link>
+                  </div>
+
                 </div>
               ))}
             </div>
