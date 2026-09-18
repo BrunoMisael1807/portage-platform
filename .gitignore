@@ -1,24 +1,30 @@
-# dependencias
-node_modules
-/.pnp
-.pnp.js
+# Dependências
+node_modules/
+.pnpm-store/
+.yarn/
 
-# ambiente de teste
-.coverage
+# Next.js
+.next/
+out/
+.vercel/
 
-# next.js
-/.next/
-/out/
-build
-
-# arquivos de ambiente
+# Ambiente
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Logs
+*.log
+
+# Testes
+coverage/
+test-results/
+playwright-report/
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
