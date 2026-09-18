@@ -1,0 +1,30 @@
+# Dependências
+node_modules/
+.pnpm-store/
+.yarn/
+
+# Next.js
+.next/
+out/
+.vercel/
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Testes
+coverage/
+test-results/
+playwright-report/
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
