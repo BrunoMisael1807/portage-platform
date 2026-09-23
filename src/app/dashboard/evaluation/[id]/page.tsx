@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '../../../../lib/supabase'
 
-// 1. IMPORTAÇÃO DOS DADOS EXTRAÍDOS DO EXCEL
+// IMPORTAÇÃO DOS DADOS DO EXCEL
 import { portageAreas } from '../../../../data/portage'
 
 export default function EvaluationPage() {
@@ -16,7 +16,9 @@ export default function EvaluationPage() {
   const [user, setUser] = useState<any>(null)
   const [message, setMessage] = useState('')
   
-  const [responses, setResponses] = useState<Record<string, boolean>>({})
+  // 1. ATUALIZAÇÃO DO ESTADO DE RESPOSTAS
+  // Em vez de guardar verdadeiro/falso, agora guardamos 'S', 'AV' ou 'N' para cada pergunta
+  const [responses, setResponses] = useState<Record<string, 'S' | 'AV' | 'N'>>({})
   const [selectedFaixa, setSelectedFaixa] = useState<number>(5)
 
   useEffect(() => {
@@ -25,30 +27,43 @@ export default function EvaluationPage() {
       if (!session) return router.push('/login')
       setUser(session.user)
 
-      const { data: patientData } = await supabase
-        .from('patients')
-        .select('*')
-        .eq('id', id)
-        .single()
-        
+      const { data: patientData } = await supabase.from('patients').select('*').eq('id', id).single()
       if (patientData) setPatient(patientData)
       setLoading(false)
     }
     loadData()
   }, [id, router])
 
-  const toggleResponse = (itemId: string) => {
-    setResponses(prev => ({ ...prev, [itemId]: !prev[itemId] }))
+  // 2. NOVA FUNÇÃO DE RESPOSTA
+  // Regista a escolha exata do profissional (S, AV ou N)
+  const handleResponse = (itemId: string, value: 'S' | 'AV' | 'N') => {
+    setResponses(prev => ({ ...prev, [itemId]: value }))
   }
 
-  // MOTOR CLÍNICO: Calcula a linha de base e teto automaticamente
+  // ============================================================================
+  // 3. MOTOR CLÍNICO ATUALIZADO (S=1, AV=0.5, N=0)
+  // ============================================================================
   const itemsInCurrentFaixa = portageAreas.flatMap((area: any) => area.items).filter((item: any) => item.faixa_etaria === selectedFaixa)
   const totalItems = itemsInCurrentFaixa.length
-  const acertos = itemsInCurrentFaixa.filter((item: any) => responses[item.id]).length
-  const erros = totalItems - acertos 
+  
+  // Calcula a pontuação somando 1 ponto para S e 0.5 para AV
+  let score = 0
+  let itensRespondidos = 0
 
-  const percAcertos = totalItems > 0 ? Math.round((acertos / totalItems) * 100) : 0
-  const percErros = totalItems > 0 ? Math.round((erros / totalItems) * 100) : 0
+  itemsInCurrentFaixa.forEach((item: any) => {
+    const resposta = responses[item.id]
+    if (resposta) {
+      itensRespondidos++
+      if (resposta === 'S') score += 1
+      else if (resposta === 'AV') score += 0.5
+      // 'N' soma 0, portanto não precisa de condição
+    }
+  })
+
+  // Calcula a percentagem de aquisição (acertos) e não-aquisição (erros) baseada nos pontos
+  const percAcertos = totalItems > 0 ? Math.round((score / totalItems) * 100) : 0
+  // A percentagem de erros é o restante da pontuação possível que não foi atingida
+  const percErros = totalItems > 0 ? Math.round(((totalItems - score) / totalItems) * 100) : 0
 
   let alertStatus = 'neutro' 
   let alertMessage = 'Preencha os itens para calcular a linha de base e teto.'
@@ -56,13 +71,13 @@ export default function EvaluationPage() {
   if (totalItems > 0) {
     if (percAcertos >= 75) {
       alertStatus = 'avanco'
-      alertMessage = `Critério atingido (${percAcertos}% de acertos). Pode avançar para a faixa dos ${selectedFaixa + 1} anos.`
-    } else if (percErros >= 50 && acertos > 0) { 
+      alertMessage = `Critério atingido (${percAcertos}% alcançado). Pode avançar para a faixa dos ${selectedFaixa + 1} anos.`
+    } else if (percErros >= 50 && itensRespondidos > 0) { 
       alertStatus = 'recuo'
-      alertMessage = `Atenção: ${percErros}% de não-aquisições. Recomenda-se recuar para a faixa dos ${selectedFaixa - 1} anos para estabelecer a linha de base.`
-    } else if (acertos > 0) {
+      alertMessage = `Atenção: ${percErros}% de não-aquisições/falhas. Recue para a faixa dos ${selectedFaixa - 1} anos para a linha de base.`
+    } else if (itensRespondidos > 0) {
       alertStatus = 'neutro'
-      alertMessage = `Em avaliação... (${percAcertos}% de acertos).`
+      alertMessage = `Em avaliação... (${percAcertos}% alcançado).`
     }
   }
 
@@ -73,7 +88,7 @@ export default function EvaluationPage() {
       professional_id: user.id, 
       evaluation_date: new Date().toISOString().split('T')[0], 
       responses: responses, 
-      notes: `Avaliação baseada na faixa dos ${selectedFaixa} anos.`
+      notes: `Avaliação na faixa dos ${selectedFaixa} anos. (S=1, AV=0.5, N=0)`
     })
 
     if (!error) {
@@ -99,7 +114,6 @@ export default function EvaluationPage() {
           {patient && <p className="text-gray-600 mt-1">Paciente: <strong className="text-gray-800">{patient.full_name}</strong></p>}
         </div>
         
-        {/* COMBO BOX DE SELEÇÃO DE IDADE (ATUALIZADA DE 0 A 6 ANOS) */}
         <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
           <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Idade Alvo (Anos)</label>
           <select 
@@ -119,6 +133,7 @@ export default function EvaluationPage() {
 
       {message && <div className="mb-6 p-4 rounded bg-green-50 text-green-700 font-semibold border border-green-200">{message}</div>}
 
+      {/* TERMÓMETRO VISUAL */}
       <div className={`sticky top-4 z-10 mb-8 p-5 rounded-xl shadow-md border transition-all duration-300 ${
         alertStatus === 'avanco' ? 'bg-green-50 border-green-300' : 
         alertStatus === 'recuo' ? 'bg-red-50 border-red-300' : 
@@ -126,7 +141,9 @@ export default function EvaluationPage() {
       }`}>
         <div className="flex justify-between items-center mb-2">
           <h3 className="font-bold text-gray-800">Métricas da Faixa Etária ({selectedFaixa} anos)</h3>
-          <span className="text-sm font-semibold text-gray-500">{acertos} acertos de {totalItems} itens</span>
+          <span className="text-sm font-semibold text-gray-500">
+            {score} pontos / {totalItems} possíveis
+          </span>
         </div>
         
         <div className="w-full bg-gray-200 rounded-full h-3 mb-3 overflow-hidden flex">
@@ -142,34 +159,57 @@ export default function EvaluationPage() {
         </p>
       </div>
 
+      {/* ÁREAS E PERGUNTAS */}
       <div className="space-y-6">
         {portageAreas.map((area: any) => (
           <div key={area.area} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
             <h2 className="text-lg font-bold text-indigo-900 bg-indigo-50 p-4 border-b border-indigo-100">
               Área: {area.area}
             </h2>
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-4">
               
               {area.items.filter((item: any) => item.faixa_etaria === selectedFaixa).map((item: any) => (
-                <label key={item.id} className="flex items-start gap-4 p-4 rounded-lg hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200 transition-all">
-                  <input 
-                    type="checkbox" 
-                    className="mt-1 h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" 
-                    checked={responses[item.id] || false} 
-                    onChange={() => toggleResponse(item.id)} 
-                  />
+                <div key={item.id} className="p-4 rounded-lg border border-gray-200 hover:border-indigo-300 transition-all bg-gray-50">
                   <div className="flex flex-col">
-                    <span className="text-gray-800 font-medium text-lg">
+                    <span className="text-gray-800 font-medium text-lg mb-2">
                       <span className="text-indigo-400 font-bold mr-2">{item.numero}.</span> 
                       {item.pergunta}
                     </span>
                     {item.criterio && (
-                      <span className="text-sm text-gray-500 mt-2 bg-gray-100 p-2 rounded border-l-2 border-indigo-300">
+                      <span className="text-sm text-gray-600 mb-4 bg-white p-2 rounded border-l-2 border-indigo-300">
                         {item.criterio}
                       </span>
                     )}
+                    
+                    {/* 4. NOVOS BOTÕES DE RESPOSTA CLÍNICA */}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <button
+                        onClick={() => handleResponse(item.id, 'S')}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold text-sm transition-colors border ${
+                          responses[item.id] === 'S' ? 'bg-green-500 text-white border-green-600 shadow-inner' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        S (Sim)
+                      </button>
+                      <button
+                        onClick={() => handleResponse(item.id, 'AV')}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold text-sm transition-colors border ${
+                          responses[item.id] === 'AV' ? 'bg-yellow-400 text-gray-900 border-yellow-500 shadow-inner' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        AV (Às Vezes)
+                      </button>
+                      <button
+                        onClick={() => handleResponse(item.id, 'N')}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold text-sm transition-colors border ${
+                          responses[item.id] === 'N' ? 'bg-red-500 text-white border-red-600 shadow-inner' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        N (Não)
+                      </button>
+                    </div>
                   </div>
-                </label>
+                </div>
               ))}
               
               {area.items.filter((item: any) => item.faixa_etaria === selectedFaixa).length === 0 && (
