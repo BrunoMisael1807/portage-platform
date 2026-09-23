@@ -10,19 +10,23 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
+    "lucide-react": "^1.47.0",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "recharts": "^3.10.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "latest",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "autoprefixer": "^10.6.1",
     "eslint": "latest",
     "eslint-config-next": "latest",
-    "tailwindcss": "latest",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
     "typescript": "latest"
   }
 }

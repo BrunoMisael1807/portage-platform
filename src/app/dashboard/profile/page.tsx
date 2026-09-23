@@ -11,7 +11,6 @@ export default function ProfilePage() {
   const [message, setMessage] = useState('')
   const [userEmail, setUserEmail] = useState('')
 
-  // Estado do formulário com todos os campos requisitados
   const [formData, setFormData] = useState({
     full_name: '',
     cpf: '',
@@ -23,7 +22,6 @@ export default function ProfilePage() {
     phone: ''
   })
 
-  // 1. CARREGAR DADOS EXISTENTES
   useEffect(() => {
     const loadProfile = async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -31,7 +29,6 @@ export default function ProfilePage() {
       
       setUserEmail(session.user.email || '')
 
-      // Procura o perfil do profissional autenticado
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
@@ -55,13 +52,11 @@ export default function ProfilePage() {
     loadProfile()
   }, [router])
 
-  // 2. ATUALIZAR ESTADO ENQUANTO O UTILIZADOR ESCREVE
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
-  // 3. GUARDAR DADOS NO SUPABASE
-  const handleSave = async (e: React.FormEvent) => {
+const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
     setMessage('')
@@ -69,9 +64,10 @@ export default function ProfilePage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
 
+    // AGORA INCLUI O E-MAIL DO USUÁRIO LOGADO JUNTO COM OS DADOS DO FORMULÁRIO
     const { error } = await supabase
       .from('profiles')
-      .update(formData)
+      .update({ ...formData, email: session.user.email }) 
       .eq('id', session.user.id)
 
     if (error) {
@@ -81,12 +77,18 @@ export default function ProfilePage() {
     }
     setSaving(false)
   }
+  
 
   if (loading) return <div className="p-8 text-gray-500">A carregar perfil...</div>
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="p-8 max-w-3xl mx-auto pb-32">
+      
+      {/* CABEÇALHO CORRIGIDO COM BOTÃO DE VOLTAR */}
       <div className="mb-8 border-b pb-4">
+        <button onClick={() => router.push('/dashboard')} className="text-indigo-600 hover:underline mb-4 block text-sm font-semibold">
+          &larr; Voltar ao Início
+        </button>
         <h1 className="text-3xl font-bold text-gray-800">Perfil Profissional</h1>
         <p className="text-gray-600 mt-2">Mantenha os seus dados de registo clínico atualizados.</p>
       </div>
@@ -99,10 +101,8 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* FORMULÁRIO DE CADASTRO */}
       <form onSubmit={handleSave} className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 space-y-6">
         
-        {/* BLOCO 1: IDENTIFICAÇÃO */}
         <div className="space-y-4">
           <h2 className="text-xl font-bold text-indigo-900 border-b pb-2">Identificação</h2>
           
@@ -123,7 +123,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* BLOCO 2: REGISTO CLÍNICO */}
         <div className="space-y-4">
           <h2 className="text-xl font-bold text-indigo-900 border-b pb-2">Registo Profissional</h2>
           
@@ -149,7 +148,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* BLOCO 3: CONTACTO E ENDEREÇO */}
         <div className="space-y-4">
           <h2 className="text-xl font-bold text-indigo-900 border-b pb-2">Contacto e Endereço</h2>
           
