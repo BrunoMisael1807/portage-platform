@@ -3,193 +3,91 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
-import Link from 'next/link'
 
-// Define a estrutura de dados do paciente
-type Patient = {
-  id: string
-  full_name: string
-  date_of_birth: string
-}
-
-export default function DashboardPage() {
+export default function DashboardHub() {
   const router = useRouter()
+  const [userName, setUserName] = useState('Profissional')
   const [loading, setLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
-  
-  // Estados do formulário e da lista
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [patientName, setPatientName] = useState('')
-  const [patientDob, setPatientDob] = useState('')
-  const [formMessage, setFormMessage] = useState('')
 
   useEffect(() => {
-    // Verifica a sessão e carrega os pacientes
-    const checkAuthAndLoadData = async () => {
+    const loadUser = async () => {
       const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return router.push('/login')
       
-      if (!session) {
-        router.push('/login')
-      } else {
-        setUser(session.user)
-        await loadPatients()
-        setLoading(false)
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', session.user.id)
+        .single()
+        
+      if (profile?.full_name) {
+        setUserName(profile.full_name.split(' ')[0]) // Mostra apenas o primeiro nome
       }
+      setLoading(false)
     }
-    
-    checkAuthAndLoadData()
+    loadUser()
   }, [router])
 
-  // Função para buscar pacientes restritos pela LGPD (RLS no Supabase)
-  const loadPatients = async () => {
-    const { data, error } = await supabase
-      .from('patients')
-      .select('*')
-      .order('created_at', { ascending: false })
-      
-    if (data) setPatients(data)
-  }
-
+  // Função para fazer logout e voltar à página de login
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  const handleAddPatient = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setFormMessage('')
-    
-    if (!user) return
-
-    // 1. Truque de segurança: Garante que o perfil do profissional existe no banco
-    // antes de vincular um paciente, evitando erros de chave estrangeira (Foreign Key).
-    await supabase.from('profiles').upsert({
-      id: user.id,
-      full_name: user.email?.split('@')[0] || 'Profissional',
-      role: 'professional'
-    })
-
-    // 2. Insere o paciente com o ID do profissional (Gatilho da LGPD)
-    const { error } = await supabase.from('patients').insert({
-      professional_id: user.id,
-      full_name: patientName,
-      date_of_birth: patientDob
-    })
-
-    if (error) {
-      setFormMessage('Erro ao cadastrar: ' + error.message)
-    } else {
-      setFormMessage('Paciente cadastrado com sucesso!')
-      setPatientName('')
-      setPatientDob('')
-      // Atualiza a lista na tela imediatamente
-      await loadPatients()
-    }
-  }
-
-  if (loading) {
-    return <div className="p-8 text-gray-500">Verificando credenciais e carregando dados seguros...</div>
-  }
+  if (loading) return <div className="p-8 text-gray-500">A carregar plataforma...</div>
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-8 border-b pb-4">
-        <h1 className="text-2xl font-bold text-gray-800">Portage Platform - Painel Clínico</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-600">{user?.email}</span>
-          <button 
-            onClick={handleLogout}
-            className="bg-red-50 text-red-700 px-4 py-2 rounded text-sm font-semibold hover:bg-red-100"
-          >
-            Sair
-          </button>
+    <div className="p-8 max-w-6xl mx-auto pb-32">
+      <div className="flex justify-between items-end mb-8 border-b pb-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">Olá, {userName}!</h1>
+          <p className="text-gray-600 mt-2">Bem-vindo(a) à sua plataforma de avaliação clínica.</p>
         </div>
+        <button onClick={handleLogout} className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold transition-colors">
+          Sair da Conta
+        </button>
       </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+      {/* GRELHA DE NAVEGAÇÃO PRINCIPAL */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
-        {/* LADO ESQUERDO: Formulário de Cadastro */}
-        <div className="md:col-span-1 bg-white p-6 rounded-lg border border-gray-200 shadow-sm h-fit">
-          <h2 className="text-lg font-bold mb-4 text-gray-800">Novo Paciente</h2>
-          <form onSubmit={handleAddPatient} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nome Completo</label>
-              <input
-                type="text"
-                required
-                value={patientName}
-                onChange={(e) => setPatientName(e.target.value)}
-                className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
-                placeholder="Ex: João da Silva"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento</label>
-              <input
-                type="date"
-                required
-                value={patientDob}
-                onChange={(e) => setPatientDob(e.target.value)}
-                className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            
-            {formMessage && (
-              <div className={`p-3 text-sm rounded ${formMessage.includes('Erro') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
-                {formMessage}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full bg-blue-600 text-white py-2.5 rounded text-sm font-semibold hover:bg-blue-700 transition-colors"
-            >
-              Cadastrar Paciente
-            </button>
-          </form>
+        {/* CARTÃO 1: PACIENTES */}
+        <div 
+          onClick={() => router.push('/dashboard/patients')}
+          className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:border-indigo-500 hover:shadow-md transition-all cursor-pointer group"
+        >
+          <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+            👥
+          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Meus Pacientes</h2>
+          <p className="text-sm text-gray-500">Gerencie cadastros, visualize o histórico clínico e partilhe acessos com a equipa.</p>
         </div>
 
-        {/* LADO DIREITO: Lista de Pacientes */}
-        <div className="md:col-span-2 bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-          <h2 className="text-lg font-bold mb-4 text-gray-800">Meus Pacientes</h2>
-          
-          {patients.length === 0 ? (
-            <p className="text-gray-500 text-sm p-4 bg-gray-50 rounded border border-dashed border-gray-300 text-center">
-              Nenhum paciente cadastrado ainda. Utilize o formulário ao lado para começar.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {patients.map((patient) => (
-                <div key={patient.id} className="p-4 border border-gray-100 rounded-lg hover:border-blue-300 hover:shadow-sm transition-all flex justify-between items-center bg-gray-50">
-                  <div>
-                    <p className="font-semibold text-gray-800 text-lg">{patient.full_name}</p>
-                    <p className="text-sm text-gray-500">
-                      Nascimento: {new Date(patient.date_of_birth).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
-                    </p>
-                  </div>
-                  
-                  {/* NOVOS BOTÕES: Histórico e Nova Avaliação */}
-                  <div className="flex gap-2">
-                    <Link 
-                      href={`/dashboard/patient/${patient.id}`} 
-                      className="text-gray-700 text-sm font-semibold hover:underline bg-gray-100 px-3 py-1.5 rounded border border-gray-200"
-                    >
-                      Histórico
-                    </Link>
-                    <Link 
-                      href={`/dashboard/evaluation/${patient.id}`} 
-                      className="text-blue-600 text-sm font-semibold hover:underline bg-blue-50 px-3 py-1.5 rounded border border-blue-100"
-                    >
-                      Nova Avaliação
-                    </Link>
-                  </div>
-
-                </div>
-              ))}
-            </div>
-          )}
+        {/* CARTÃO 2: PERFIL PROFISSIONAL */}
+        <div 
+          onClick={() => router.push('/dashboard/profile')}
+          className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:border-indigo-500 hover:shadow-md transition-all cursor-pointer group"
+        >
+          <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+            ⚕️
+          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Meu Perfil</h2>
+          <p className="text-sm text-gray-500">Atualize os seus dados de contacto e registo nos conselhos de classe (CRFa, CRP, etc).</p>
         </div>
 
+        {/* CARTÃO 3: PROTOCOLOS */}
+        <div 
+          onClick={() => router.push('/dashboard/protocols')}
+          className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 hover:border-indigo-500 hover:shadow-md transition-all cursor-pointer group"
+        >
+          <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
+            📚
+          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Protocolos</h2>
+          <p className="text-sm text-gray-500">Inventário Portage ativo. Novos protocolos (Denver, VB-MAPP) em breve.</p>
+        </div>
+
+        
       </div>
     </div>
   )
