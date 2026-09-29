@@ -38,23 +38,28 @@ export default function ProfilePage() {
     phone: '',
   });
 
-  // Lógica REAL: Carregamento dos dados do perfil do profissional
+  // Lógica de Carregamento de Perfil Corrigida e Resistente a Falhas
   useEffect(() => {
     const loadProfile = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
-      if (!session) {
+      if (sessionError || !session) {
         router.push('/login');
         return;
       }
 
       setUserEmail(session.user.email || '');
 
-      const { data: profile } = await supabase
+      // Tenta procurar o perfil. Se não existir (PGRST116), não tem problema, apenas não preenche.
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', session.user.id)
         .single();
+
+      if (profileError && profileError.code !== 'PGRST116') {
+         console.error('Erro ao carregar perfil:', profileError.message);
+      }
 
       if (profile) {
         setFormData({
@@ -78,16 +83,17 @@ export default function ProfilePage() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Lógica REAL: Salvamento do perfil no Supabase
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setMessage('');
 
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
+    if (!session) {
+        setSaving(false);
+        return;
+    }
 
-    // Atualiza a tabela profiles com os dados do formulário e injeta o e-mail logado
     const { error } = await supabase
       .from('profiles')
       .upsert({ 
@@ -100,6 +106,8 @@ export default function ProfilePage() {
       setMessage('Erro ao guardar perfil: ' + error.message);
     } else {
       setMessage('Perfil atualizado com sucesso!');
+      // Mantém a mensagem visível por um curto período
+      setTimeout(() => setMessage(''), 4000);
     }
     setSaving(false);
   };

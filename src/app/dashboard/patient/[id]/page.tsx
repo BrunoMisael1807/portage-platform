@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '../../../../lib/supabase';
+import { gerarRelatorioAvaliacao } from '../../../../lib/portageEngine';
+import { BarGapChart, RadarDevelopmentChart } from '../../../../components/EvaluationCharts';
 import {
   LineChart,
   Line,
@@ -23,14 +25,24 @@ import {
   Users,
   UserPlus,
   Mail,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   FileText,
   Clock,
-  Sparkles,
   Award,
+  BrainCircuit,
+  Target,
+  Activity,
+  Sparkles
 } from 'lucide-react';
+
+const AREAS_CONFIG = [
+  { key: 'Cognição', color: '#8B5CF6' },
+  { key: 'Motor', color: '#F59E0B' },
+  { key: 'Linguagem', color: '#3B82F6' },
+  { key: 'Socialização', color: '#EC4899' },
+  { key: 'Autocuidado', color: '#10B981' }
+];
 
 export default function PatientHistoryPage() {
   const { id } = useParams() as { id: string };
@@ -41,6 +53,7 @@ export default function PatientHistoryPage() {
   const [evaluations, setEvaluations] = useState<any[]>([]);
   const [team, setTeam] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
+  const [reportData, setReportData] = useState<any>(null);
 
   const [shareEmail, setShareEmail] = useState('');
   const [shareMessage, setShareMessage] = useState({ text: '', type: '' });
@@ -52,7 +65,6 @@ export default function PatientHistoryPage() {
     }
   }, [id]);
 
-  // Lógica REAL: Carregamento do paciente, avaliações e equipa partilhada
   const loadData = async () => {
     setLoading(true);
     const { data: { session } } = await supabase.auth.getSession();
@@ -63,55 +75,117 @@ export default function PatientHistoryPage() {
     }
     setUser(session.user);
 
-    // 1. Busca os dados do paciente
+    // 1. DADOS DO PACIENTE
     const { data: pat } = await supabase
       .from('patients')
       .select('*')
       .eq('id', id)
       .single();
-    
     setPatient(pat);
 
-    // 2. Busca o histórico de avaliações (fazendo Join com o perfil do profissional)
-    const { data: evals } = await supabase
+    // 2. BUSCA DE AVALIAÇÕES (Sem o Join automático para evitar falhas)
+    const { data: evalsData } = await supabase
       .from('evaluations')
-      .select('*, profiles(full_name, council_type)')
+      .select('*')
       .eq('patient_id', id)
       .order('evaluation_date', { ascending: false });
 
-    if (evals) {
+    if (evalsData && evalsData.length > 0) {
+      // 3. BUSCA MANUAL BLINDADA DE PROFISSIONAIS
+      const profIds = Array.from(new Set(evalsData.map((e: any) => e.professional_id).filter(Boolean)));
+      const profsMap: Record<string, any> = {};
+
+      if (profIds.length > 0) {
+        const { data: profs } = await supabase
+          .from('profiles')
+          .select('id, full_name, council_type')
+          .in('id', profIds);
+
+        if (profs) {
+          profs.forEach((p: any) => { profsMap[p.id] = p; });
+        }
+      }
+
+      // Junta as avaliações com os nomes dos profissionais encontrados
+      const evals = evalsData.map((e: any) => ({
+        ...e,
+        profiles: profsMap[e.professional_id] || null
+      }));
+
       setEvaluations(evals);
 
-      // PREPARAÇÃO DOS DADOS PARA O GRÁFICO (Da avaliação mais antiga para a mais recente)
+      // CÁLCULO COGNITIVO
+      const latestEval = evals[0];
+      if (latestEval && latestEval.responses && pat?.birth_date) {
+        try {
+          const relatorio = gerarRelatorioAvaliacao(pat.birth_date, latestEval.responses);
+          
+          const chartDataGap = relatorio.detalhesPorArea.map((area: any) => ({
+            subject: area.area.charAt(0).toUpperCase() + area.area.slice(1),
+            'Idade Cognitiva': Math.round(area.idadeDesenvolvimentoMeses),
+            'Idade Cronológica': Math.round(relatorio.idadeCronologicaMeses)
+          }));
+          
+          setReportData({ ...relatorio, chartDataGap });
+        } catch (e) {
+          console.error("Aviso: Falha no cálculo cognitivo ou formato antigo.", e);
+        }
+      }
+
+      // GRÁFICOS DE EVOLUÇÃO (Código Limpo, sem Normalizador)
       const dataForChart = evals
         .slice()
         .reverse()
         .map((ev: any) => {
-          let score = 0;
-          const responses = ev.responses || {};
-          const totalRespondidos = Object.keys(responses).length;
+          let scoreTotal = 0, itemsTotal = 0;
+          let scores = { cognicao: 0, motor: 0, linguagem: 0, socializacao: 0, autocuidado: 0 };
+          let itemsCount = { cognicao: 0, motor: 0, linguagem: 0, socializacao: 0, autocuidado: 0 };
 
-          // Matemática Clínica (S=1, AV=0.5, N=0)
-          Object.values(responses).forEach((val: any) => {
-            if (val === 'S') score += 1;
-            if (val === 'AV') score += 0.5;
-          });
+          const res = ev.responses || {};
+          const ehNovoFormato = res.cognicao || res.motor || res.linguagem || res.socializacao || res.autocuidado;
 
-          const percentagem = totalRespondidos > 0 ? Math.round((score / totalRespondidos) * 100) : 0;
+          if (ehNovoFormato) {
+             ['cognicao', 'motor', 'linguagem', 'socializacao', 'autocuidado'].forEach(key => {
+                if (Array.isArray(res[key])) {
+                   res[key].forEach((faixa: any) => {
+                      if (faixa.itens) {
+                         faixa.itens.forEach((item: any) => {
+                            if (item.foi_avaliado) {
+                               itemsTotal++;
+                               scoreTotal += item.pontuacao;
+                               itemsCount[key as keyof typeof itemsCount]++;
+                               scores[key as keyof typeof scores] += item.pontuacao;
+                            }
+                         });
+                      }
+                   });
+                }
+             });
+          } else {
+             itemsTotal = Object.keys(res).length;
+             Object.values(res).forEach((val: any) => {
+               if (val === 'S') scoreTotal += 1;
+               if (val === 'AV') scoreTotal += 0.5;
+             });
+          }
+
+          const calcPerc = (s: number, t: number) => t > 0 ? Math.round((s / t) * 100) : 0;
 
           return {
-            data: new Date(ev.evaluation_date).toLocaleDateString('pt-BR', {
-              day: '2-digit',
-              month: '2-digit',
-            }),
-            Evolucao: percentagem, // Valor Y do gráfico
-            Itens: totalRespondidos,
+            data: new Date(ev.evaluation_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+            Evolucao: calcPerc(scoreTotal, itemsTotal),
+            Cognição: calcPerc(scores.cognicao, itemsCount.cognicao),
+            Motor: calcPerc(scores.motor, itemsCount.motor),
+            Linguagem: calcPerc(scores.linguagem, itemsCount.linguagem),
+            Socialização: calcPerc(scores.socializacao, itemsCount.socializacao),
+            Autocuidado: calcPerc(scores.autocuidado, itemsCount.autocuidado),
+            Itens: itemsTotal,
           };
         });
       setChartData(dataForChart);
     }
 
-    // 3. Busca a equipa multidisciplinar que tem acesso ao paciente
+    // 4. EQUIPA MULTIDISCIPLINAR
     const { data: shares } = await supabase
       .from('patient_shares')
       .select('*')
@@ -129,7 +203,6 @@ export default function PatientHistoryPage() {
     setLoading(false);
   };
 
-  // Lógica REAL: Partilha do paciente em conformidade com a LGPD
   const handleShare = async (e: React.FormEvent) => {
     e.preventDefault();
     setShareMessage({ text: 'A procurar colega...', type: 'info' });
@@ -139,7 +212,6 @@ export default function PatientHistoryPage() {
       return;
     }
 
-    // Procura o colega pelo e-mail
     const { data: colleague } = await supabase
       .from('profiles')
       .select('id, full_name')
@@ -154,7 +226,6 @@ export default function PatientHistoryPage() {
       return;
     }
 
-    // Insere a permissão na tabela de partilhas
     const { error } = await supabase.from('patient_shares').insert({
       patient_id: id,
       shared_by: user.id,
@@ -170,7 +241,7 @@ export default function PatientHistoryPage() {
     } else {
       setShareMessage({ text: `Acesso concedido a ${colleague.full_name} com sucesso!`, type: 'success' });
       setShareEmail('');
-      loadData(); // Recarrega a equipa instantaneamente
+      loadData(); 
     }
   };
 
@@ -178,44 +249,11 @@ export default function PatientHistoryPage() {
     return (
       <div className="portage-loading-wrapper">
         <style>{`
-          .portage-loading-wrapper {
-            font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            background-color: #F8FAF8;
-            color: #2D3731;
-          }
-          .portage-loading-box {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 58px;
-            height: 58px;
-            border-radius: 18px;
-            background: #E2F4E9;
-            border: 1px solid #BCE2CB;
-            color: #26533A;
-            box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1);
-            animation: portagePulse 1.8s ease-in-out infinite;
-          }
-          .portage-loading-title {
-            margin-top: 18px;
-            font-size: 0.98rem;
-            font-weight: 700;
-            color: #26533A;
-          }
-          .portage-loading-subtitle {
-            margin-top: 4px;
-            font-size: 0.78rem;
-            color: #627268;
-          }
-          @keyframes portagePulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.06); opacity: 0.85; }
-          }
+          .portage-loading-wrapper { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background-color: #F8FAF8; color: #2D3731; }
+          .portage-loading-box { display: flex; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 18px; background: #E2F4E9; border: 1px solid #BCE2CB; color: #26533A; box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1); animation: portagePulse 1.8s ease-in-out infinite; }
+          .portage-loading-title { margin-top: 18px; font-size: 0.98rem; font-weight: 700; color: #26533A; }
+          .portage-loading-subtitle { margin-top: 4px; font-size: 0.78rem; color: #627268; }
+          @keyframes portagePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.85; } }
         `}</style>
         <div className="portage-loading-box">
           <History size={26} />
@@ -291,6 +329,7 @@ export default function PatientHistoryPage() {
         .portage-main-container { max-width: 1200px; margin: 0 auto; padding: 36px 24px 120px; position: relative; z-index: 1; }
         .portage-history-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 28px; align-items: start; }
         .portage-left-column { display: flex; flex-direction: column; gap: 24px; }
+        
         .portage-patient-hero-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 28px 32px; box-shadow: var(--p-shadow-md); position: relative; overflow: hidden; }
         .portage-patient-hero-card::before { content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 5px; background: linear-gradient(180deg, var(--p-green-700) 0%, var(--p-green-500) 100%); }
         .portage-btn-back { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; color: var(--p-green-700); font-size: 0.86rem; font-weight: 700; cursor: pointer; margin-bottom: 14px; padding: 0; transition: var(--p-transition); }
@@ -298,16 +337,34 @@ export default function PatientHistoryPage() {
         .portage-patient-hero-inner { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
         .portage-patient-meta-col h1 { font-size: 1.85rem; font-weight: 800; letter-spacing: -0.025em; color: var(--p-neutral-900); line-height: 1.2; }
         .portage-patient-dob-tag { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.88rem; font-weight: 600; color: var(--p-neutral-600); background: var(--p-neutral-100); padding: 5px 12px; border-radius: var(--p-radius-full); border: 1px solid var(--p-neutral-200); }
+        
+        .portage-hero-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
+        .portage-btn-report-ai { display: inline-flex; align-items: center; gap: 8px; background: var(--p-white); color: var(--p-green-800); border: 2px solid var(--p-green-600); padding: 12px 24px; border-radius: var(--p-radius-md); font-size: 0.92rem; font-weight: 700; cursor: pointer; transition: var(--p-transition); }
+        .portage-btn-report-ai:hover { background: var(--p-green-50); transform: translateY(-2px); box-shadow: var(--p-shadow-md); }
+        
         .portage-btn-new-eval { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--p-green-800) 0%, var(--p-green-700) 100%); color: var(--p-white); border: none; padding: 14px 24px; border-radius: var(--p-radius-md); font-size: 0.92rem; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(38, 83, 58, 0.22); transition: var(--p-transition); text-decoration: none; }
         .portage-btn-new-eval:hover { background: linear-gradient(135deg, var(--p-green-900) 0%, var(--p-green-800) 100%); transform: translateY(-2px); box-shadow: 0 8px 22px rgba(38, 83, 58, 0.3); }
-        .portage-chart-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 28px; box-shadow: var(--p-shadow-md); }
+
+        .portage-cognitive-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; border-top: 1px dashed var(--p-neutral-200); padding-top: 24px;}
+        .portage-metric-box { background: var(--p-neutral-50); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-md); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; }
+        .portage-metric-box.highlight { background: var(--p-green-50); border-color: var(--p-green-200); }
+        .portage-metric-box.blue { background: #F0F9FF; border-color: #BAE6FD; }
+        .portage-metric-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--p-neutral-600); }
+        .portage-metric-value { font-size: 1.4rem; font-weight: 800; color: var(--p-neutral-900); }
+        .portage-metric-box.highlight .portage-metric-label { color: var(--p-green-800); }
+        .portage-metric-box.highlight .portage-metric-value { color: var(--p-green-950); }
+        .portage-metric-box.blue .portage-metric-label { color: #0369A1; }
+        .portage-metric-box.blue .portage-metric-value { color: #0C4A6E; }
+
+        .portage-chart-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 28px; box-shadow: var(--p-shadow-md); display: block; }
         .portage-chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
         .portage-chart-title-row { display: flex; align-items: center; gap: 10px; }
         .portage-chart-icon-box { width: 36px; height: 36px; border-radius: var(--p-radius-sm); background: var(--p-green-100); border: 1px solid var(--p-green-200); color: var(--p-green-800); display: flex; align-items: center; justify-content: center; }
         .portage-chart-title { font-size: 1.25rem; font-weight: 800; color: var(--p-neutral-900); letter-spacing: -0.01em; }
         .portage-chart-tag { font-size: 0.74rem; font-weight: 700; color: var(--p-green-800); background: var(--p-green-100); padding: 4px 10px; border-radius: var(--p-radius-full); border: 1px solid var(--p-green-200); }
-        .portage-chart-wrapper { height: 310px; width: 100%; margin: 0 auto; }
+        .portage-chart-wrapper { height: 300px; min-height: 300px; width: 100%; margin: 0 auto; display: block; position: relative; }
         .portage-chart-footer-note { font-size: 0.78rem; color: var(--p-neutral-500); text-align: center; margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--p-neutral-200); line-height: 1.4; }
+        
         .portage-history-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); overflow: hidden; box-shadow: var(--p-shadow-md); }
         .portage-history-header-bar { background: #FAFCFA; border-bottom: 1px solid var(--p-neutral-200); padding: 18px 26px; display: flex; align-items: center; justify-content: space-between; }
         .portage-history-title-row { display: flex; align-items: center; gap: 10px; }
@@ -324,6 +381,7 @@ export default function PatientHistoryPage() {
         .portage-eval-pro-row strong { color: var(--p-neutral-800); }
         .portage-eval-notes-bubble { margin-top: 10px; padding: 12px 14px; background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-sm); font-size: 0.85rem; color: var(--p-neutral-700); line-height: 1.5; position: relative; }
         .portage-empty-evals { text-align: center; padding: 38px 20px; color: var(--p-neutral-500); font-style: italic; font-size: 0.9rem; }
+        
         .portage-right-column { display: flex; flex-direction: column; gap: 24px; }
         .portage-team-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 26px 24px; box-shadow: var(--p-shadow-md); }
         .portage-team-header { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--p-neutral-200); margin-bottom: 20px; }
@@ -352,17 +410,22 @@ export default function PatientHistoryPage() {
         .portage-member-name { font-size: 0.86rem; font-weight: 700; color: var(--p-neutral-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .portage-member-sub { font-size: 0.74rem; color: var(--p-neutral-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .portage-team-empty { font-size: 0.84rem; color: var(--p-neutral-400); font-style: italic; padding: 8px 0; }
-        @media (max-width: 992px) { .portage-history-layout { grid-template-columns: 1fr; } .portage-main-container { padding: 24px 16px 80px; } }
+        
+        @media (max-width: 992px) { 
+           .portage-history-layout { grid-template-columns: 1fr; } 
+           .portage-main-container { padding: 24px 16px 80px; } 
+        }
         @media (max-width: 600px) {
           .portage-top-navbar-inner { padding: 12px 16px; }
           .portage-patient-hero-card { padding: 22px 18px; }
           .portage-patient-meta-col h1 { font-size: 1.5rem; }
           .portage-patient-hero-inner { flex-direction: column; align-items: stretch; }
-          .portage-btn-new-eval { width: 100%; justify-content: center; }
+          .portage-btn-new-eval, .portage-btn-report-ai { width: 100%; justify-content: center; }
           .portage-chart-card { padding: 20px 14px; }
-          .portage-chart-wrapper { height: 250px; }
+          .portage-chart-wrapper { height: 250px; min-height: 250px; }
           .portage-share-input-row { flex-direction: column; }
           .portage-btn-share-submit { width: 100%; justify-content: center; }
+          .portage-cognitive-metrics { grid-template-columns: 1fr; gap: 10px; }
         }
       `}</style>
 
@@ -391,7 +454,6 @@ export default function PatientHistoryPage() {
       <main className="portage-main-container">
         <div className="portage-history-layout">
           
-          {/* COLUNA ESQUERDA: Dados do Paciente, Gráfico e Histórico */}
           <div className="portage-left-column">
             
             <div className="portage-patient-hero-card">
@@ -415,18 +477,87 @@ export default function PatientHistoryPage() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => router.push(`/dashboard/evaluation/${patient.id}`)}
-                  className="portage-btn-new-eval"
-                >
-                  <Plus size={18} strokeWidth={2.5} />
-                  <span>Nova Avaliação Portage</span>
-                </button>
+                <div className="portage-hero-buttons">
+                  <button
+                    onClick={() => router.push(`/dashboard/report/${patient.id}`)}
+                    className="portage-btn-report-ai"
+                  >
+                    <Sparkles size={18} strokeWidth={2.5} />
+                    <span>Gerar Relatório IA</span>
+                  </button>
+
+                  <button
+                    onClick={() => router.push(`/dashboard/evaluation/${patient.id}`)}
+                    className="portage-btn-new-eval"
+                  >
+                    <Plus size={18} strokeWidth={2.5} />
+                    <span>Nova Avaliação Portage</span>
+                  </button>
+                </div>
               </div>
+
+              {/* RESUMO COGNITIVO */}
+              {reportData && (
+                 <div className="portage-cognitive-metrics">
+                    <div className="portage-metric-box">
+                       <span className="portage-metric-label">Idade Cronológica</span>
+                       <span className="portage-metric-value">{reportData.idadeCronologicaFormatada}</span>
+                    </div>
+                    <div className="portage-metric-box highlight">
+                       <span className="portage-metric-label">Idade Cognitiva (Geral)</span>
+                       <span className="portage-metric-value">{Math.round(reportData.idadeGeralDesenvolvimento)} meses</span>
+                    </div>
+                    <div className="portage-metric-box blue">
+                       <span className="portage-metric-label">Quociente de Desenv. (QD)</span>
+                       <span className="portage-metric-value">{reportData.quocienteDesenvolvimento}%</span>
+                    </div>
+                 </div>
+              )}
             </div>
 
-            {/* GRÁFICO SÓ APARECE SE HOUVER MAIS DE 1 AVALIAÇÃO PARA TRAÇAR A CURVA */}
-            {chartData.length > 1 && (
+            {/* GRÁFICOS LADO A LADO - BARRAS E RADAR */}
+            {reportData && reportData.chartDataGap && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1. GRÁFICO DE GAP (BARRAS) */}
+                <div className="portage-chart-card">
+                  <div className="portage-chart-header" style={{ marginBottom: '16px' }}>
+                    <div className="portage-chart-title-row">
+                      <div className="portage-chart-icon-box" style={{ background: '#E0F2FE', color: '#0284C7', borderColor: '#BAE6FD' }}>
+                        <BrainCircuit size={18} />
+                      </div>
+                      <div>
+                        <h2 className="portage-chart-title" style={{ fontSize: '1.05rem' }}>Gap Analysis (Áreas)</h2>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="portage-chart-wrapper" style={{ height: '300px', minHeight: '300px' }}>
+                    <BarGapChart data={reportData.chartDataGap} />
+                  </div>
+                </div>
+
+                {/* 2. GRÁFICO DE RADAR (MULTIDIMENSIONAL) */}
+                <div className="portage-chart-card">
+                  <div className="portage-chart-header" style={{ marginBottom: '16px' }}>
+                    <div className="portage-chart-title-row">
+                      <div className="portage-chart-icon-box" style={{ background: '#F3E8FF', color: '#9333EA', borderColor: '#D8B4FE' }}>
+                        <Target size={18} />
+                      </div>
+                      <div>
+                        <h2 className="portage-chart-title" style={{ fontSize: '1.05rem' }}>Perfil Multidimensional</h2>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="portage-chart-wrapper" style={{ height: '300px', minHeight: '300px' }}>
+                    <RadarDevelopmentChart data={reportData.chartDataGap} />
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* GRÁFICO DE EVOLUÇÃO TEMPORAL - GERAL */}
+            {chartData.length > 0 && (
               <div className="portage-chart-card">
                 <div className="portage-chart-header">
                   <div className="portage-chart-title-row">
@@ -434,7 +565,7 @@ export default function PatientHistoryPage() {
                       <TrendingUp size={20} />
                     </div>
                     <div>
-                      <h2 className="portage-chart-title">Evolução Clínica (% de Aquisição)</h2>
+                      <h2 className="portage-chart-title">Evolução Clínica (% de Aquisição Geral)</h2>
                     </div>
                   </div>
                   <span className="portage-chart-tag">
@@ -442,57 +573,55 @@ export default function PatientHistoryPage() {
                   </span>
                 </div>
 
-                <div className="portage-chart-wrapper">
+                <div className="portage-chart-wrapper" style={{ height: '300px', minHeight: '300px' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
                       data={chartData}
                       margin={{ top: 10, right: 20, bottom: 5, left: -10 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#E5EDE8" />
-                      <XAxis
-                        dataKey="data"
-                        stroke="#627268"
-                        fontSize={12}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        stroke="#627268"
-                        fontSize={12}
-                        domain={[0, 100]}
-                        tickFormatter={(tick) => `${tick}%`}
-                        tickLine={false}
-                      />
+                      <XAxis dataKey="data" stroke="#627268" fontSize={12} tickLine={false} />
+                      <YAxis stroke="#627268" fontSize={12} domain={[0, 100]} tickFormatter={(tick) => `${tick}%`} tickLine={false} />
                       <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#1D3E2B',
-                          borderRadius: '12px',
-                          border: 'none',
-                          color: '#FFFFFF',
-                          boxShadow: '0 10px 25px rgba(29, 62, 43, 0.25)',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                        }}
+                        contentStyle={{ backgroundColor: '#1D3E2B', borderRadius: '12px', border: 'none', color: '#FFFFFF', boxShadow: '0 10px 25px rgba(29, 62, 43, 0.25)', fontSize: '12px', fontWeight: 600 }}
                         itemStyle={{ color: '#E2F4E9' }}
                         formatter={(value: any) => [`${value}%`, 'Aquisição']}
                         labelFormatter={(label) => `Data da Aplicação: ${label}`}
                       />
-                      <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '12px' }} />
-                      <Line
-                        type="monotone"
-                        dataKey="Evolucao"
-                        name="Curva de Desenvolvimento"
-                        stroke="#26533A"
-                        strokeWidth={3.5}
-                        activeDot={{ r: 7, fill: '#3E825D', stroke: '#FFFFFF', strokeWidth: 2 }}
-                        dot={{ r: 5, fill: '#26533A', stroke: '#FFFFFF', strokeWidth: 1.5 }}
-                      />
+                      <Line type="monotone" dataKey="Evolucao" name="Curva de Desenvolvimento Geral" stroke="#26533A" strokeWidth={3.5} activeDot={{ r: 7, fill: '#3E825D', stroke: '#FFFFFF', strokeWidth: 2 }} dot={{ r: 5, fill: '#26533A', stroke: '#FFFFFF', strokeWidth: 1.5 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+              </div>
+            )}
 
-                <p className="portage-chart-footer-note">
-                  O gráfico apresenta o domínio das competências avaliadas ao longo do tempo (S=1, AV=0.5, N=0).
-                </p>
+            {/* NOVOS 5 GRÁFICOS INDIVIDUAIS POR ÁREA */}
+            {chartData.length > 0 && (
+              <div className="mt-6 mb-2">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-6 ml-2">
+                  <Activity size={22} className="text-emerald-700" />
+                  Evolução Detalhada por Área
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {AREAS_CONFIG.map(area => (
+                    <div key={area.key} className="portage-chart-card" style={{ padding: '20px' }}>
+                      <div className="portage-chart-header" style={{ marginBottom: '12px' }}>
+                        <h3 className="font-bold text-slate-700" style={{ fontSize: '1rem' }}>Evolução: {area.key}</h3>
+                      </div>
+                      <div className="portage-chart-wrapper" style={{ height: '220px', minHeight: '220px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chartData} margin={{ top: 10, right: 10, bottom: 5, left: -20 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#E5EDE8" />
+                            <XAxis dataKey="data" stroke="#627268" fontSize={11} tickLine={false} />
+                            <YAxis stroke="#627268" fontSize={11} domain={[0, 100]} tickFormatter={(tick) => `${tick}%`} tickLine={false} />
+                            <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '12px' }} />
+                            <Line type="monotone" dataKey={area.key} stroke={area.color} strokeWidth={3} dot={{ r: 4, fill: area.color }} activeDot={{ r: 6 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -517,10 +646,38 @@ export default function PatientHistoryPage() {
                 ) : (
                   evaluations.map((evalRecord) => {
                     let score = 0;
-                    Object.values(evalRecord.responses || {}).forEach((val: any) => {
-                      if (val === 'S') score += 1;
-                      if (val === 'AV') score += 0.5;
-                    });
+                    let itensAvaliadosTotais = 0;
+                    
+                    const res = evalRecord.responses || {};
+                    const ehNovoFormato = res.cognicao || res.motor || res.linguagem || res.socializacao || res.autocuidado;
+
+                    if (ehNovoFormato) {
+                        Object.values(res).forEach((area: any) => {
+                            if (Array.isArray(area)) {
+                                area.forEach((faixa: any) => {
+                                    if (faixa.itens) {
+                                        faixa.itens.forEach((item: any) => {
+                                            if (item.foi_avaliado) {
+                                                score += item.pontuacao;
+                                                itensAvaliadosTotais++;
+                                            }
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    } else {
+                        itensAvaliadosTotais = Object.keys(res).length;
+                        Object.values(res).forEach((val: any) => {
+                          if (val === 'S') score += 1;
+                          if (val === 'AV') score += 0.5;
+                        });
+                    }
+
+                    // A leitura do profissional foi alterada para ler a do nosso array processado
+                    const profileData = evalRecord.profiles;
+                    const nomeProfissional = profileData?.full_name || 'Profissional Desconhecido';
+                    const conselhoProfissional = profileData?.council_type || 'Sem registo';
 
                     return (
                       <div key={evalRecord.id} className="portage-eval-card">
@@ -533,13 +690,12 @@ export default function PatientHistoryPage() {
                           </div>
                           <span className="portage-eval-score-pill">
                             <Award size={13} />
-                            {score} pts / {Object.keys(evalRecord.responses || {}).length} itens
+                            {Math.round(score)} pts / {itensAvaliadosTotais} itens aplicados
                           </span>
                         </div>
 
                         <p className="portage-eval-pro-row">
-                          <strong>Profissional:</strong>{' '}
-                          {evalRecord.profiles?.full_name} ({evalRecord.profiles?.council_type})
+                          <strong>Profissional:</strong> {nomeProfissional} ({conselhoProfissional})
                         </p>
 
                         {evalRecord.notes && (
@@ -556,7 +712,6 @@ export default function PatientHistoryPage() {
 
           </div>
 
-          {/* COLUNA DIREITA: Gestão da Equipa Multidisciplinar */}
           <div className="portage-right-column">
             <div className="portage-team-card">
               <div className="portage-team-header">
