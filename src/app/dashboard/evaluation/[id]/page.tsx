@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '../../../../lib/supabase';
 // Importação dos dados REAIS do Portage que criámos no início do projeto
-import { portageAreas } from '../../../../data/portage'; 
+import { portageAreas } from '../../../../data/portage';
 import {
   Stethoscope,
   ArrowLeft,
@@ -34,18 +34,22 @@ export default function EvaluationPage() {
 
   // ESTADO DAS RESPOSTAS REAIS
   const [responses, setResponses] = useState<Record<string, 'S' | 'AV' | 'N'>>({});
-  const [selectedFaixa, setSelectedFaixa] = useState<number>(0); // Começamos no 0 (0-1 ano)
+  const [selectedFaixa, setSelectedFaixa] = useState<number>(0);
 
   useEffect(() => {
     if (id) {
       loadData();
+      const draft = localStorage.getItem(`portage_draft_${id}`);
+      if (draft) {
+        setResponses(JSON.parse(draft));
+      }
     }
   }, [id, router]);
 
   const loadData = async () => {
     setLoading(true);
     const { data: { session } } = await supabase.auth.getSession();
-    
+
     if (!session) {
       router.push('/login');
       return;
@@ -58,10 +62,9 @@ export default function EvaluationPage() {
       .select('*')
       .eq('id', id)
       .single();
-      
+
     if (patientData) {
       setPatient(patientData);
-      // Opcional: auto-selecionar a faixa etária baseada na idade da criança
       const birthDate = new Date(patientData.birth_date);
       const today = new Date();
       let age = today.getFullYear() - birthDate.getFullYear();
@@ -69,15 +72,19 @@ export default function EvaluationPage() {
       if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
         age--;
       }
-      // Limita a idade máxima ao Portage (0 a 5 anos)
-      setSelectedFaixa(Math.min(Math.max(age, 0), 5)); 
+      setSelectedFaixa(Math.min(Math.max(age, 0), 5));
     }
-    
+
     setLoading(false);
   };
 
   const handleResponse = (itemId: string, value: 'S' | 'AV' | 'N') => {
-    setResponses((prev) => ({ ...prev, [itemId]: value }));
+    setResponses((prev) => {
+      const newState = { ...prev, [itemId]: value };
+      // Guarda localmente a cada clique
+      localStorage.setItem(`portage_draft_${id}`, JSON.stringify(newState));
+      return newState;
+    });
   };
 
   // ============================================================================
@@ -86,7 +93,7 @@ export default function EvaluationPage() {
   const itemsInCurrentFaixa = portageAreas
     .flatMap((area: any) => area.items)
     .filter((item: any) => item.faixa_etaria === selectedFaixa);
-    
+
   const totalItems = itemsInCurrentFaixa.length;
 
   let score = 0;
@@ -120,14 +127,83 @@ export default function EvaluationPage() {
     }
   }
 
-  // Lógica REAL: Guardar Avaliação no Supabase
+  // ============================================================================
+  // CONSTRUTOR DO PAYLOAD DO MOTOR DE IDADE COGNITIVA
+  // ============================================================================
+  const buildEnginePayload = (validResponses: Record<string, 'S' | 'AV' | 'N'>) => {
+    const payload: any = { cognicao: [], motor: [], linguagem: [], socializacao: [], autocuidado: [] };
+
+    // MAPEADOR BLINDADO: Resolve o bug do Autocuidado independentemente de como esteja escrito
+    const mapAreaKey = (areaName: string) => {
+      const name = areaName.toLowerCase();
+      if (name.includes('auto') || name.includes('cuidado')) return 'autocuidado';
+      if (name.includes('socia')) return 'socializacao';
+      if (name.includes('ling')) return 'linguagem';
+      if (name.includes('mot')) return 'motor';
+      return 'cognicao';
+    };
+
+    const getFaixaDetails = (faixaIndex: number) => {
+      const faixas = [
+        { min: 0, max: 12, ref: 6 },
+        { min: 13, max: 24, ref: 18 },
+        { min: 25, max: 36, ref: 30 },
+        { min: 37, max: 48, ref: 42 },
+        { min: 49, max: 60, ref: 54 },
+        { min: 61, max: 72, ref: 66 },
+      ];
+      return faixas[faixaIndex] || faixas[0];
+    };
+
+    portageAreas.forEach((area: any) => {
+      const areaKey = mapAreaKey(area.area);
+      const faixasMap = new Map<number, any[]>();
+
+      area.items.forEach((item: any) => {
+        if (!faixasMap.has(item.faixa_etaria)) {
+          faixasMap.set(item.faixa_etaria, []);
+        }
+        faixasMap.get(item.faixa_etaria)?.push(item);
+      });
+
+      const faixasArray = Array.from(faixasMap.entries()).map(([faixaIndex, items]) => {
+        const detalhesFaixa = getFaixaDetails(Number(faixaIndex));
+
+        const itensAvaliados = items.map(item => {
+          const resp = validResponses[item.id];
+          let pontuacao = 0;
+          if (resp === 'S') pontuacao = 1.0;
+          else if (resp === 'AV') pontuacao = 0.5;
+
+          return {
+            id: item.id,
+            foi_avaliado: resp !== undefined,
+            pontuacao: pontuacao
+          };
+        });
+
+        return {
+          idade_min_meses: detalhesFaixa.min,
+          idade_max_meses: detalhesFaixa.max,
+          idade_referencia_meses: detalhesFaixa.ref,
+          total_itens: items.length,
+          itens: itensAvaliados
+        };
+      });
+
+      faixasArray.sort((a, b) => a.idade_min_meses - b.idade_min_meses);
+      payload[areaKey] = faixasArray;
+    });
+
+    return payload;
+  };
+
   const handleSave = async () => {
     setLoading(true);
-    
-    // Filtra apenas as respostas que foram dadas
+
     const validResponses = Object.fromEntries(
       Object.entries(responses).filter(([_, v]) => v !== undefined)
-    );
+    ) as Record<string, 'S' | 'AV' | 'N'>;
 
     if (Object.keys(validResponses).length === 0) {
       setMessage('Erro: Responda a pelo menos um item antes de guardar.');
@@ -135,17 +211,20 @@ export default function EvaluationPage() {
       return;
     }
 
+    const structuredResponses = buildEnginePayload(validResponses);
+
     const { error } = await supabase.from('evaluations').insert({
       patient_id: id,
       professional_id: user.id,
       evaluation_date: new Date().toISOString(),
-      responses: validResponses,
+      responses: structuredResponses,
       notes: `Avaliação na faixa dos ${selectedFaixa} a ${selectedFaixa + 1} anos. Score: ${score}/${totalItems} (${percAcertos}%).`,
     });
 
     if (!error) {
+      localStorage.removeItem(`portage_draft_${id}`); // Limpa o rascunho
       setMessage('Avaliação salva com sucesso!');
-      setTimeout(() => router.push(`/dashboard/patient/${id}`), 1500);
+          setTimeout(() => router.push(`/dashboard/patient/${id}`), 1500);
     } else {
       setMessage('Erro ao salvar: ' + error.message);
     }
@@ -153,14 +232,13 @@ export default function EvaluationPage() {
   };
 
   const renderAreaIcon = (areaName: string) => {
-    switch (areaName) {
-      case 'Socialização': return <Heart size={18} />;
-      case 'Cognição': return <Brain size={18} />;
-      case 'Linguagem': return <MessageCircle size={18} />;
-      case 'Auto-cuidados': return <Sparkles size={18} />;
-      case 'Desenvolvimento Motor': return <Footprints size={18} />;
-      default: return <Layers size={18} />;
-    }
+    const name = areaName.toLowerCase();
+    if (name.includes('socia')) return <Heart size={18} />;
+    if (name.includes('cog')) return <Brain size={18} />;
+    if (name.includes('ling')) return <MessageCircle size={18} />;
+    if (name.includes('auto') || name.includes('cuidado')) return <Sparkles size={18} />;
+    if (name.includes('mot')) return <Footprints size={18} />;
+    return <Layers size={18} />;
   };
 
   if (loading) {
@@ -301,7 +379,7 @@ export default function EvaluationPage() {
       </header>
 
       <main className="portage-main-container">
-        
+
         <div className="portage-eval-header-card">
           <div className="portage-eval-title-col">
             <button
@@ -350,15 +428,13 @@ export default function EvaluationPage() {
           </div>
         )}
 
-        {/* TERMÔMETRO VISUAL CLÍNICO (STICKY) */}
         <div
-          className={`portage-thermometer-box ${
-            alertStatus === 'avanco'
-              ? 'avanco'
-              : alertStatus === 'recuo'
+          className={`portage-thermometer-box ${alertStatus === 'avanco'
+            ? 'avanco'
+            : alertStatus === 'recuo'
               ? 'recuo'
               : 'neutro'
-          }`}
+            }`}
         >
           <div className="portage-thermometer-top-row">
             <h3 className="portage-thermometer-title">
@@ -378,13 +454,12 @@ export default function EvaluationPage() {
           </div>
 
           <p
-            className={`portage-thermometer-alert ${
-              alertStatus === 'avanco'
-                ? 'avanco'
-                : alertStatus === 'recuo'
+            className={`portage-thermometer-alert ${alertStatus === 'avanco'
+              ? 'avanco'
+              : alertStatus === 'recuo'
                 ? 'recuo'
                 : 'neutro'
-            }`}
+              }`}
           >
             {alertStatus === 'avanco' && <CheckCircle2 size={16} />}
             {alertStatus === 'recuo' && <AlertTriangle size={16} />}
@@ -393,7 +468,6 @@ export default function EvaluationPage() {
           </p>
         </div>
 
-        {/* ÁREAS E PERGUNTAS */}
         <div className="portage-areas-stack">
           {portageAreas.map((area: any) => {
             const itemsArea = area.items.filter(
@@ -434,9 +508,8 @@ export default function EvaluationPage() {
                         <button
                           type="button"
                           onClick={() => handleResponse(item.id, 'S')}
-                          className={`portage-btn-resp ${
-                            responses[item.id] === 'S' ? 'active-s' : ''
-                          }`}
+                          className={`portage-btn-resp ${responses[item.id] === 'S' ? 'active-s' : ''
+                            }`}
                         >
                           <CheckCircle2 size={16} />
                           <span>S (Sim • 1.0)</span>
@@ -445,9 +518,8 @@ export default function EvaluationPage() {
                         <button
                           type="button"
                           onClick={() => handleResponse(item.id, 'AV')}
-                          className={`portage-btn-resp ${
-                            responses[item.id] === 'AV' ? 'active-av' : ''
-                          }`}
+                          className={`portage-btn-resp ${responses[item.id] === 'AV' ? 'active-av' : ''
+                            }`}
                         >
                           <Clock size={16} />
                           <span>AV (Às Vezes • 0.5)</span>
@@ -456,9 +528,8 @@ export default function EvaluationPage() {
                         <button
                           type="button"
                           onClick={() => handleResponse(item.id, 'N')}
-                          className={`portage-btn-resp ${
-                            responses[item.id] === 'N' ? 'active-n' : ''
-                          }`}
+                          className={`portage-btn-resp ${responses[item.id] === 'N' ? 'active-n' : ''
+                            }`}
                         >
                           <AlertTriangle size={16} />
                           <span>N (Não • 0.0)</span>
