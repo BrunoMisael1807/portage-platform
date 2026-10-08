@@ -21,7 +21,6 @@ export default function DashboardPage() {
   const [userName, setUserName] = useState('Profissional');
   const [loading, setLoading] = useState(true);
 
-  // Lógica REAL de autenticação e carregamento de dados do perfil do Supabase
   useEffect(() => {
     const loadUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -31,14 +30,21 @@ export default function DashboardPage() {
         return;
       }
 
+      // 1. MODIFICAÇÃO AQUI: Trazemos também o CPF e o Conselho
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name')
+        .select('full_name, cpf, council_type')
         .eq('id', session.user.id)
         .single();
 
+      // 2. REGRA DE ONBOARDING: Se faltar o CPF ou o Conselho, força a ir para o Perfil
+      if (!profile?.cpf || !profile?.council_type) {
+        router.push('/dashboard/profile');
+        return;
+      }
+
       if (profile?.full_name) {
-        setUserName(profile.full_name.split(' ')[0]); // Mostra apenas o primeiro nome
+        setUserName(profile.full_name.split(' ')[0]);
       }
       setLoading(false);
     };
@@ -46,7 +52,6 @@ export default function DashboardPage() {
     loadUser();
   }, [router]);
 
-  // Função REAL para fazer logout
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/login');
@@ -58,49 +63,23 @@ export default function DashboardPage() {
         <style>{`
           .portage-loading-wrapper {
             font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            background-color: #F8FAF8;
-            color: #2D3731;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; background-color: #F8FAF8; color: #2D3731;
           }
           .portage-loading-spinner-box {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 56px;
-            height: 56px;
-            border-radius: 18px;
-            background: #E2F4E9;
-            border: 1px solid #BCE2CB;
-            color: #26533A;
-            box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1);
-            animation: portagePulse 1.8s ease-in-out infinite;
+            display: flex; align-items: center; justify-content: center; width: 56px; height: 56px;
+            border-radius: 18px; background: #E2F4E9; border: 1px solid #BCE2CB; color: #26533A;
+            box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1); animation: portagePulse 1.8s ease-in-out infinite;
           }
-          .portage-loading-text {
-            margin-top: 18px;
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #26533A;
-            letter-spacing: -0.01em;
-          }
-          .portage-loading-subtext {
-            margin-top: 4px;
-            font-size: 0.78rem;
-            color: #627268;
-          }
-          @keyframes portagePulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.06); opacity: 0.85; }
-          }
+          .portage-loading-text { margin-top: 18px; font-size: 0.95rem; font-weight: 700; color: #26533A; }
+          .portage-loading-subtext { margin-top: 4px; font-size: 0.78rem; color: #627268; }
+          @keyframes portagePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.85; } }
         `}</style>
         <div className="portage-loading-spinner-box">
           <Stethoscope size={26} />
         </div>
-        <div className="portage-loading-text">A carregar plataforma...</div>
-        <div className="portage-loading-subtext">Portage Platform • Segurança e Privacidade Clínica</div>
+        <div className="portage-loading-text">A verificar credenciais clínicas...</div>
+        <div className="portage-loading-subtext">Portage Platform • Segurança e Privacidade</div>
       </div>
     );
   }
@@ -108,6 +87,7 @@ export default function DashboardPage() {
   return (
     <div className="portage-dashboard-root">
       <style>{`
+        /* MANTER OS SEUS ESTILOS CSS EXATAMENTE COMO ESTAVAM */
         :root {
           --p-font: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           --p-green-950: #132A1C; --p-green-900: #1D3E2B; --p-green-800: #26533A;
@@ -233,7 +213,6 @@ export default function DashboardPage() {
 
         <div className="portage-cards-grid">
           
-          {/* CARTÃO 1: PACIENTES */}
           <div
             onClick={() => router.push('/dashboard/patients')}
             className="portage-nav-card portage-card-patients"
@@ -258,7 +237,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* CARTÃO 2: PERFIL PROFISSIONAL */}
           <div
             onClick={() => router.push('/dashboard/profile')}
             className="portage-nav-card portage-card-profile"
@@ -283,7 +261,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* CARTÃO 3: PROTOCOLOS */}
           <div
             onClick={() => router.push('/dashboard/protocols')}
             className="portage-nav-card portage-card-protocols"
@@ -310,7 +287,6 @@ export default function DashboardPage() {
 
         </div>
 
-        {/* Faixa Informativa */}
         <div className="portage-info-banner">
           <div className="portage-info-banner-left">
             <div className="portage-info-banner-icon">
