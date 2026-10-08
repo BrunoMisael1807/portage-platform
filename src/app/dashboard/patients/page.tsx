@@ -22,6 +22,7 @@ import {
   Heart,
   Baby,
   FileText,
+  CreditCard, // Ícone importado para o CPF
 } from 'lucide-react';
 
 export default function PatientsManagerPage() {
@@ -31,15 +32,19 @@ export default function PatientsManagerPage() {
   const [showForm, setShowForm] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // 1. ESTADO ATUALIZADO COM OS CPFs
   const [formData, setFormData] = useState({
     full_name: '',
+    cpf: '',
     birth_date: '',
     height: '',
     weight: '',
     father_name: '',
+    father_cpf: '',
     father_email: '',
     father_phone: '',
     mother_name: '',
+    mother_cpf: '',
     mother_email: '',
     mother_phone: '',
   });
@@ -60,7 +65,6 @@ export default function PatientsManagerPage() {
     fetchPatients();
   }, []);
 
-  // Lógica REAL: Busca pacientes criados por mim OU partilhados comigo
   const fetchPatients = async () => {
     setLoading(true);
     const { data: { session } } = await supabase.auth.getSession();
@@ -94,7 +98,6 @@ export default function PatientsManagerPage() {
       }
     }
 
-    // Ordenar do mais recente para o mais antigo
     allPatients.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     setPatients(allPatients);
@@ -105,7 +108,6 @@ export default function PatientsManagerPage() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Lógica REAL: Salvar paciente no Supabase
   const handleSavePatient = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -124,10 +126,14 @@ export default function PatientsManagerPage() {
       .select()
       .single();
 
+    // 2. TRATAMENTO DO ERRO DE CPF DUPLICADO NA BASE DO PROFISSIONAL
     if (error) {
-      setErrorMsg('Erro ao guardar: ' + error.message);
+      if (error.code === '23505' && error.message.includes('patients_cpf_professional_id_key')) {
+        setErrorMsg('Você já possui um paciente cadastrado com este CPF na sua base clínica.');
+      } else {
+        setErrorMsg('Erro ao guardar: ' + error.message);
+      }
     } else if (data) {
-      // Redireciona imediatamente para o histórico clínico (prontuário) do paciente criado
       router.push(`/dashboard/patient/${data.id}`);
     }
   };
@@ -380,6 +386,21 @@ export default function PatientsManagerPage() {
                 </div>
 
                 <div className="portage-field-group">
+                  <label className="portage-field-label">CPF do Paciente</label>
+                  <div className="portage-input-container">
+                    <CreditCard size={16} className="portage-input-icon" />
+                    <input
+                      type="text"
+                      name="cpf"
+                      value={formData.cpf}
+                      onChange={handleInputChange}
+                      placeholder="000.000.000-00"
+                      className="portage-custom-input has-icon"
+                    />
+                  </div>
+                </div>
+
+                <div className="portage-field-group">
                   <label className="portage-field-label">Data de Nascimento</label>
                   <div className="portage-dob-group">
                     <div className="portage-input-container" style={{ flex: 1 }}>
@@ -450,6 +471,7 @@ export default function PatientsManagerPage() {
 
               <div className="portage-parents-grid">
                 
+                {/* DADOS DA MÃE */}
                 <div className="portage-parent-box portage-parent-mother">
                   <div className="portage-parent-box-header">
                     <div className="portage-parent-icon">👩</div>
@@ -464,6 +486,18 @@ export default function PatientsManagerPage() {
                       value={formData.mother_name}
                       onChange={handleInputChange}
                       placeholder="Nome da mãe"
+                      className="portage-custom-input"
+                    />
+                  </div>
+
+                  <div className="portage-field-group">
+                    <label className="portage-field-label">CPF da Mãe</label>
+                    <input
+                      type="text"
+                      name="mother_cpf"
+                      value={formData.mother_cpf}
+                      onChange={handleInputChange}
+                      placeholder="000.000.000-00"
                       className="portage-custom-input"
                     />
                   </div>
@@ -493,6 +527,7 @@ export default function PatientsManagerPage() {
                   </div>
                 </div>
 
+                {/* DADOS DO PAI */}
                 <div className="portage-parent-box portage-parent-father">
                   <div className="portage-parent-box-header">
                     <div className="portage-parent-icon">👨</div>
@@ -507,6 +542,18 @@ export default function PatientsManagerPage() {
                       value={formData.father_name}
                       onChange={handleInputChange}
                       placeholder="Nome do pai"
+                      className="portage-custom-input"
+                    />
+                  </div>
+
+                  <div className="portage-field-group">
+                    <label className="portage-field-label">CPF do Pai</label>
+                    <input
+                      type="text"
+                      name="father_cpf"
+                      value={formData.father_cpf}
+                      onChange={handleInputChange}
+                      placeholder="000.000.000-00"
                       className="portage-custom-input"
                     />
                   </div>
@@ -580,6 +627,11 @@ export default function PatientsManagerPage() {
                         <div>
                           <h3 className="portage-patient-name">{pat.full_name}</h3>
                           <div className="portage-patient-meta-row">
+                            {pat.cpf && (
+                              <span className="portage-patient-meta-pill">
+                                <CreditCard size={11} /> CPF: {pat.cpf}
+                              </span>
+                            )}
                             <span className="portage-patient-meta-pill">
                               <Calendar size={11} /> {patientAge ? `${patientAge} anos` : 'Idade n/d'}
                             </span>
