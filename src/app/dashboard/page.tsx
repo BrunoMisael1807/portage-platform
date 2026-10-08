@@ -14,12 +14,25 @@ import {
   Clock,
   CheckCircle2,
   FileText,
+  HelpCircle,
+  MessageCircle,
+  AlertTriangle,
+  X,
+  Send
 } from 'lucide-react';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [userName, setUserName] = useState('Profissional');
   const [loading, setLoading] = useState(true);
+
+  // Estados para o Menu de Ajuda e Modal de Feedback
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState('Sugestão');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<'success' | 'error' | null>(null);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -30,14 +43,12 @@ export default function DashboardPage() {
         return;
       }
 
-      // 1. MODIFICAÇÃO AQUI: Trazemos também o CPF e o Conselho
       const { data: profile } = await supabase
         .from('profiles')
         .select('full_name, cpf, council_type')
         .eq('id', session.user.id)
         .single();
 
-      // 2. REGRA DE ONBOARDING: Se faltar o CPF ou o Conselho, força a ir para o Perfil
       if (!profile?.cpf || !profile?.council_type) {
         router.push('/dashboard/profile');
         return;
@@ -55,6 +66,37 @@ export default function DashboardPage() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/login');
+  };
+
+  // Função para gravar o feedback no Supabase
+  const handleSubmitFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feedbackMessage.trim()) return;
+    
+    setIsSubmitting(true);
+    setFeedbackStatus(null);
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session) return;
+
+    const { error } = await supabase.from('feedbacks').insert({
+      user_id: session.user.id,
+      tipo_mensagem: feedbackType,
+      mensagem: feedbackMessage,
+    });
+
+    if (error) {
+      setFeedbackStatus('error');
+    } else {
+      setFeedbackStatus('success');
+      setTimeout(() => {
+        setIsFeedbackModalOpen(false);
+        setFeedbackMessage('');
+        setFeedbackStatus(null);
+      }, 2000);
+    }
+    setIsSubmitting(false);
   };
 
   if (loading) {
@@ -87,7 +129,6 @@ export default function DashboardPage() {
   return (
     <div className="portage-dashboard-root">
       <style>{`
-        /* MANTER OS SEUS ESTILOS CSS EXATAMENTE COMO ESTAVAM */
         :root {
           --p-font: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           --p-green-950: #132A1C; --p-green-900: #1D3E2B; --p-green-800: #26533A;
@@ -108,13 +149,25 @@ export default function DashboardPage() {
         .portage-dashboard-root * { box-sizing: border-box; margin: 0; padding: 0; }
         .portage-dashboard-bg { position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(circle at 12% 10%, rgba(253, 243, 220, 0.55) 0%, transparent 26%), radial-gradient(circle at 88% 14%, rgba(226, 244, 233, 0.65) 0%, transparent 32%), radial-gradient(circle at 50% 90%, rgba(242, 250, 245, 0.8) 0%, transparent 40%); }
         .portage-dash-header { position: sticky; top: 0; z-index: 40; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--p-neutral-200); }
-        .portage-dash-header-inner { max-width: 1180px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+        .portage-dash-header-inner { max-width: 1180px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
         .portage-dash-brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
         .portage-dash-brand-icon { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: var(--p-radius-sm); background: var(--p-green-100); border: 1px solid var(--p-green-200); color: var(--p-green-800); }
         .portage-dash-brand-title { font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; color: var(--p-neutral-900); line-height: 1.2; }
         .portage-dash-brand-title span { font-weight: 500; color: var(--p-neutral-600); }
+        
+        .portage-header-right-cluster { display: flex; align-items: center; gap: 16px; }
+        .portage-help-menu-container { position: relative; }
+        .portage-btn-help { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 0.8rem; font-weight: 700; color: var(--p-neutral-700); background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-full); cursor: pointer; transition: var(--p-transition); }
+        .portage-btn-help:hover, .portage-btn-help.active { background: var(--p-neutral-100); border-color: var(--p-neutral-300); color: var(--p-green-900); }
+        .portage-help-dropdown { position: absolute; top: calc(100% + 8px); right: 0; width: 220px; background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-md); box-shadow: var(--p-shadow-md); overflow: hidden; transform-origin: top right; animation: portageDropIn 0.2s ease-out; }
+        @keyframes portageDropIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .portage-help-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border: none; background: transparent; font-family: var(--p-font); font-size: 0.86rem; font-weight: 600; color: var(--p-neutral-700); cursor: pointer; text-align: left; text-decoration: none; transition: var(--p-transition); }
+        .portage-help-item:hover { background: var(--p-neutral-50); color: var(--p-green-800); }
+        .portage-help-item:not(:last-child) { border-bottom: 1px solid var(--p-neutral-100); }
+        
         .portage-dash-user-badge { display: flex; align-items: center; gap: 10px; padding: 6px 14px; background: var(--p-neutral-100); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-full); font-size: 0.78rem; font-weight: 700; color: var(--p-green-900); }
         .portage-user-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); box-shadow: 0 0 0 3px rgba(79, 168, 120, 0.25); }
+        
         .portage-main-content { max-width: 1180px; margin: 0 auto; padding: 44px 24px 120px; position: relative; z-index: 1; }
         .portage-welcome-header { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 24px; border-bottom: 1px solid var(--p-neutral-200); margin-bottom: 36px; }
         .portage-welcome-greeting { font-size: clamp(1.85rem, 3.2vw, 2.4rem); font-weight: 800; letter-spacing: -0.025em; color: var(--p-green-950); line-height: 1.15; }
@@ -122,6 +175,7 @@ export default function DashboardPage() {
         .portage-badge-clinic-active { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; font-size: 0.72rem; font-weight: 700; color: var(--p-green-800); background: var(--p-green-100); border: 1px solid var(--p-green-200); border-radius: var(--p-radius-full); }
         .portage-btn-logout { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; font-size: 0.86rem; font-weight: 700; color: #DC2626; background: #FEF2F2; border: 1px solid #FECACA; border-radius: var(--p-radius-sm); cursor: pointer; transition: var(--p-transition); box-shadow: var(--p-shadow-sm); white-space: nowrap; }
         .portage-btn-logout:hover { background: #FEE2E2; border-color: #FCA5A5; transform: translateY(-1px); }
+        
         .portage-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
         .portage-nav-card { background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 32px 28px; cursor: pointer; position: relative; transition: var(--p-transition); box-shadow: var(--p-shadow-sm); display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
         .portage-nav-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: transparent; transition: var(--p-transition); }
@@ -145,6 +199,7 @@ export default function DashboardPage() {
         .portage-card-desc { font-size: 0.88rem; line-height: 1.58; color: var(--p-neutral-600); margin-bottom: 24px; }
         .portage-card-footer-action { display: flex; align-items: center; justify-content: space-between; padding-top: 18px; border-top: 1px solid var(--p-neutral-200); font-size: 0.78rem; font-weight: 700; color: var(--p-green-700); transition: var(--p-transition); }
         .portage-nav-card:hover .portage-card-footer-action { color: var(--p-green-900); }
+        
         .portage-info-banner { margin-top: 40px; background: var(--p-white); border: 1px solid var(--p-neutral-200); border-radius: var(--p-radius-lg); padding: 24px 28px; display: flex; align-items: center; justify-content: space-between; gap: 20px; box-shadow: var(--p-shadow-sm); }
         .portage-info-banner-left { display: flex; align-items: center; gap: 16px; }
         .portage-info-banner-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: var(--p-radius-sm); background: var(--p-green-50); border: 1px solid var(--p-green-200); color: var(--p-green-700); flex-shrink: 0; }
@@ -152,10 +207,33 @@ export default function DashboardPage() {
         .portage-info-banner-desc { font-size: 0.82rem; color: var(--p-neutral-600); margin-top: 2px; }
         .portage-info-banner-meta { display: flex; align-items: center; gap: 14px; font-size: 0.76rem; font-weight: 700; color: var(--p-green-800); white-space: nowrap; }
         .portage-info-pill { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; background: var(--p-green-50); border: 1px solid var(--p-green-200); border-radius: var(--p-radius-full); }
+        
+        /* Modal Styles */
+        .portage-modal-overlay { position: fixed; inset: 0; background: rgba(28, 36, 32, 0.4); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .portage-modal-content { background: var(--p-white); border-radius: var(--p-radius-lg); width: 100%; max-width: 480px; box-shadow: var(--p-shadow-lg); overflow: hidden; animation: portageDropIn 0.25s ease-out; }
+        .portage-modal-header { padding: 20px 24px; border-bottom: 1px solid var(--p-neutral-200); display: flex; justify-content: space-between; align-items: center; }
+        .portage-modal-title { font-size: 1.15rem; font-weight: 800; color: var(--p-neutral-900); display: flex; align-items: center; gap: 8px; }
+        .portage-btn-close { background: transparent; border: none; color: var(--p-neutral-500); cursor: pointer; padding: 4px; border-radius: 6px; transition: var(--p-transition); }
+        .portage-btn-close:hover { background: var(--p-neutral-100); color: var(--p-neutral-800); }
+        .portage-modal-body { padding: 24px; }
+        .portage-form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+        .portage-form-label { font-size: 0.8rem; font-weight: 700; color: var(--p-neutral-700); }
+        .portage-form-select, .portage-form-textarea { width: 100%; padding: 10px 14px; font-family: var(--p-font); font-size: 0.88rem; border: 1px solid var(--p-neutral-300); border-radius: var(--p-radius-sm); outline: none; transition: var(--p-transition); background: var(--p-neutral-50); }
+        .portage-form-select:focus, .portage-form-textarea:focus { border-color: var(--p-green-600); background: var(--p-white); box-shadow: 0 0 0 3px rgba(79, 168, 120, 0.15); }
+        .portage-form-textarea { resize: vertical; min-height: 100px; }
+        .portage-btn-submit { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px; background: var(--p-green-800); color: var(--p-white); border: none; border-radius: var(--p-radius-sm); font-size: 0.92rem; font-weight: 700; cursor: pointer; transition: var(--p-transition); }
+        .portage-btn-submit:hover:not(:disabled) { background: var(--p-green-900); }
+        .portage-btn-submit:disabled { opacity: 0.7; cursor: not-allowed; }
+        .portage-status-feedback { padding: 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+        .portage-status-feedback.success { background: #F0FDF4; color: #15803D; border: 1px solid #BBF7D0; }
+        .portage-status-feedback.error { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+
         @media (max-width: 960px) { .portage-cards-grid { grid-template-columns: repeat(2, 1fr); } .portage-info-banner { flex-direction: column; align-items: flex-start; } }
         @media (max-width: 640px) {
           .portage-main-content { padding: 24px 16px 80px; }
           .portage-dash-header-inner { padding: 12px 16px; }
+          .portage-header-right-cluster { gap: 10px; }
+          .portage-dash-user-badge span:last-child { display: none; }
           .portage-welcome-header { flex-direction: column; align-items: flex-start; gap: 18px; margin-bottom: 28px; }
           .portage-welcome-greeting { font-size: 1.7rem; }
           .portage-btn-logout { width: 100%; justify-content: center; }
@@ -181,15 +259,53 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="portage-dash-user-badge">
-            <span className="portage-user-dot" />
-            <span>Sessão Clínica Ativa</span>
+          <div className="portage-header-right-cluster">
+            
+            {/* Menu de Ajuda */}
+            <div className="portage-help-menu-container">
+              <button 
+                className={`portage-btn-help ${isHelpOpen ? 'active' : ''}`}
+                onClick={() => setIsHelpOpen(!isHelpOpen)}
+              >
+                <HelpCircle size={15} />
+                <span>Ajuda</span>
+              </button>
+              
+              {isHelpOpen && (
+                <div className="portage-help-dropdown">
+                  <a 
+                    href="https://wa.me/5583999443260?text=Olá, preciso de suporte na Plataforma Portage" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="portage-help-item"
+                    onClick={() => setIsHelpOpen(false)}
+                  >
+                    <MessageCircle size={16} />
+                    Falar no WhatsApp
+                  </a>
+                  <button 
+                    className="portage-help-item"
+                    onClick={() => {
+                      setIsFeedbackModalOpen(true);
+                      setIsHelpOpen(false);
+                    }}
+                  >
+                    <AlertTriangle size={16} />
+                    Reportar Problema
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="portage-dash-user-badge">
+              <span className="portage-user-dot" />
+              <span>Sessão Clínica</span>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="portage-main-content">
-        
         <div className="portage-welcome-header">
           <div>
             <h1 className="portage-welcome-greeting">Olá, {userName}!</h1>
@@ -212,7 +328,6 @@ export default function DashboardPage() {
         </div>
 
         <div className="portage-cards-grid">
-          
           <div
             onClick={() => router.push('/dashboard/patients')}
             className="portage-nav-card portage-card-patients"
@@ -284,7 +399,6 @@ export default function DashboardPage() {
               <ChevronRight size={16} />
             </div>
           </div>
-
         </div>
 
         <div className="portage-info-banner">
@@ -310,6 +424,65 @@ export default function DashboardPage() {
         </div>
 
       </main>
+
+      {/* Modal de Feedback */}
+      {isFeedbackModalOpen && (
+        <div className="portage-modal-overlay" onClick={() => setIsFeedbackModalOpen(false)}>
+          <div className="portage-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="portage-modal-header">
+              <h3 className="portage-modal-title">
+                <AlertTriangle size={18} color="#D99B26" /> Enviar Feedback
+              </h3>
+              <button className="portage-btn-close" onClick={() => setIsFeedbackModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="portage-modal-body">
+              {feedbackStatus === 'success' && (
+                <div className="portage-status-feedback success">
+                  <CheckCircle2 size={16} /> Feedback enviado com sucesso! Obrigado.
+                </div>
+              )}
+              {feedbackStatus === 'error' && (
+                <div className="portage-status-feedback error">
+                  <AlertTriangle size={16} /> Erro ao enviar. Tente novamente mais tarde.
+                </div>
+              )}
+
+              <form onSubmit={handleSubmitFeedback}>
+                <div className="portage-form-group">
+                  <label className="portage-form-label">Tipo de Mensagem</label>
+                  <select 
+                    value={feedbackType} 
+                    onChange={(e) => setFeedbackType(e.target.value)}
+                    className="portage-form-select"
+                  >
+                    <option value="Sugestão">Sugestão de Melhoria</option>
+                    <option value="Dúvida">Dúvida no Uso</option>
+                    <option value="Erro">Reportar um Erro (Bug)</option>
+                  </select>
+                </div>
+                
+                <div className="portage-form-group">
+                  <label className="portage-form-label">Detalhes</label>
+                  <textarea 
+                    value={feedbackMessage}
+                    onChange={(e) => setFeedbackMessage(e.target.value)}
+                    placeholder="Descreva o que aconteceu ou a sua sugestão..."
+                    required
+                    className="portage-form-textarea"
+                  />
+                </div>
+
+                <button type="submit" disabled={isSubmitting || feedbackStatus === 'success'} className="portage-btn-submit">
+                  {isSubmitting ? 'A Enviar...' : 'Enviar Mensagem'} <Send size={16} />
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

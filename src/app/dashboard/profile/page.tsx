@@ -26,6 +26,9 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [userEmail, setUserEmail] = useState('');
+  
+  // 1. NOVO ESTADO: Controla se o utilizador está a ser obrigado a preencher os dados
+  const [isOnboarding, setIsOnboarding] = useState(false);
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -38,7 +41,6 @@ export default function ProfilePage() {
     phone: '',
   });
 
-  // Lógica de Carregamento de Perfil Corrigida e Resistente a Falhas
   useEffect(() => {
     const loadProfile = async () => {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -50,7 +52,6 @@ export default function ProfilePage() {
 
       setUserEmail(session.user.email || '');
 
-      // Tenta procurar o perfil. Se não existir (PGRST116), não tem problema, apenas não preenche.
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('*')
@@ -72,6 +73,14 @@ export default function ProfilePage() {
           city: profile.city || '',
           phone: profile.phone || '',
         });
+
+        // 2. REGRA ONBOARDING: Se faltar CPF ou Conselho, bloqueia saídas
+        if (!profile.cpf || !profile.council_type) {
+          setIsOnboarding(true);
+        }
+      } else {
+        // Se o perfil não existe de todo (usuário novíssimo via Google sem trigger ativado)
+        setIsOnboarding(true);
       }
       setLoading(false);
     };
@@ -103,11 +112,26 @@ export default function ProfilePage() {
       });
 
     if (error) {
-      setMessage('Erro ao guardar perfil: ' + error.message);
+      if (error.code === '23505') {
+        if (error.message.includes('cpf')) {
+          setMessage('Erro: Este CPF já está registado noutra conta.');
+        } else if (error.message.includes('council_registration_state')) {
+          setMessage('Erro: Este número de conselho já se encontra registado neste estado.');
+        } else {
+          setMessage('Erro: Já existe um utilizador registado com estes dados únicos.');
+        }
+      } else {
+        setMessage('Erro ao guardar perfil: ' + error.message);
+      }
     } else {
       setMessage('Perfil atualizado com sucesso!');
-      // Mantém a mensagem visível por um curto período
-      setTimeout(() => setMessage(''), 4000);
+      
+      // 3. REGRA ONBOARDING: Se estava no onboarding, liberta-o para o dashboard!
+      if (isOnboarding) {
+        setTimeout(() => router.push('/dashboard'), 1500);
+      } else {
+        setTimeout(() => setMessage(''), 4000);
+      }
     }
     setSaving(false);
   };
@@ -118,42 +142,17 @@ export default function ProfilePage() {
         <style>{`
           .portage-loading-wrapper {
             font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            background-color: #F8FAF8;
-            color: #2D3731;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; background-color: #F8FAF8; color: #2D3731;
           }
           .portage-loading-box {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 58px;
-            height: 58px;
-            border-radius: 18px;
-            background: #E2F4E9;
-            border: 1px solid #BCE2CB;
-            color: #26533A;
-            box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1);
-            animation: portagePulse 1.8s ease-in-out infinite;
+            display: flex; align-items: center; justify-content: center; width: 58px; height: 58px;
+            border-radius: 18px; background: #E2F4E9; border: 1px solid #BCE2CB; color: #26533A;
+            box-shadow: 0 4px 16px rgba(38, 83, 58, 0.1); animation: portagePulse 1.8s ease-in-out infinite;
           }
-          .portage-loading-title {
-            margin-top: 18px;
-            font-size: 0.96rem;
-            font-weight: 700;
-            color: #26533A;
-          }
-          .portage-loading-subtitle {
-            margin-top: 4px;
-            font-size: 0.78rem;
-            color: #627268;
-          }
-          @keyframes portagePulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.06); opacity: 0.85; }
-          }
+          .portage-loading-title { margin-top: 18px; font-size: 0.96rem; font-weight: 700; color: #26533A; }
+          .portage-loading-subtitle { margin-top: 4px; font-size: 0.78rem; color: #627268; }
+          @keyframes portagePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.85; } }
         `}</style>
         <div className="portage-loading-box">
           <Stethoscope size={26} />
@@ -167,6 +166,7 @@ export default function ProfilePage() {
   return (
     <div className="portage-profile-root">
       <style>{`
+        /* OS SEUS ESTILOS EXISTENTES MANTÊM-SE AQUI INALTERADOS */
         :root {
           --p-font: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           --p-green-950: #132A1C; --p-green-900: #1D3E2B; --p-green-800: #26533A;
@@ -258,17 +258,25 @@ export default function ProfilePage() {
       <main className="portage-main-container">
         
         <div className="portage-page-header">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="portage-btn-back"
-            aria-label="Voltar para a página inicial do Dashboard"
-          >
-            <ArrowLeft size={16} />
-            <span>Voltar ao Início</span>
-          </button>
-          <h1 className="portage-page-title">Perfil Profissional</h1>
+          {/* 4. ESCONDE O BOTÃO VOLTAR SE FOR ONBOARDING */}
+          {!isOnboarding && (
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="portage-btn-back"
+              aria-label="Voltar para a página inicial do Dashboard"
+            >
+              <ArrowLeft size={16} />
+              <span>Voltar ao Início</span>
+            </button>
+          )}
+          
+          <h1 className="portage-page-title">
+            {isOnboarding ? 'Complete o seu Registo' : 'Perfil Profissional'}
+          </h1>
           <p className="portage-page-subtitle">
-            Mantenha os seus dados de registo clínico atualizados.
+            {isOnboarding 
+              ? 'Para garantir a segurança clínica dos prontuários, preencha os seus dados de identificação e conselho de classe.' 
+              : 'Mantenha os seus dados de registo clínico atualizados.'}
           </p>
         </div>
 
@@ -326,6 +334,7 @@ export default function ProfilePage() {
                     name="cpf"
                     value={formData.cpf}
                     onChange={handleChange}
+                    required
                     placeholder="000.000.000-00"
                     className="portage-field-input with-icon"
                   />
@@ -447,6 +456,7 @@ export default function ProfilePage() {
                   name="state"
                   value={formData.state}
                   onChange={handleChange}
+                  required
                   maxLength={2}
                   placeholder="Ex: PB"
                   className="portage-field-input uppercase"
@@ -473,7 +483,13 @@ export default function ProfilePage() {
             className="portage-btn-save-profile"
           >
             <Save size={18} />
-            <span>{saving ? 'A Guardar...' : 'Salvar Perfil Profissional'}</span>
+            <span>
+              {saving 
+                ? 'A Guardar...' 
+                : isOnboarding 
+                  ? 'Salvar Dados e Iniciar Sistema' 
+                  : 'Salvar Perfil Profissional'}
+            </span>
           </button>
         </form>
 
